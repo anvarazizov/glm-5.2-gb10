@@ -2,7 +2,7 @@
 
 `cyankiwi/GLM-5.2-AWQ-INT4` drops GLM-5.2's native MTP layer (layer 78), so
 in-model speculative decode isn't available. Rather than graft MTP back into the
-target (which hits vLLM #35041 / #38494), we build a **separate INT4 MTP draft**
+target (which hits vLLM #35041 / #38494), I build a **separate INT4 MTP draft**
 (`glm52-mtp-int4-aligned`) that vLLM loads via `--speculative-config`. The draft
 is aligned to the pruned target on quantization, expert count, per-module quant,
 and `DeepSeekMTP` parameter naming, then verified against the real loader.
@@ -30,4 +30,4 @@ sustains higher k.
 The MTP *weights* derive from Z.ai's native GLM-5.2 MTP (MIT) and/or 0xSero's
 NVFP4 layer-78 — if you redistribute the resulting draft, attribute that lineage
 and confirm 0xSero's license for any bytes sourced there. The reconstruction
-**logic** in these scripts is ours (Apache-2.0).
+**logic** in these scripts is mine (Apache-2.0).

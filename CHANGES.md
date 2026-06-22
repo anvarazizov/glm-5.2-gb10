@@ -6,7 +6,7 @@ required by Apache License 2.0 Section 4(b). The vendored kernels under
 work carried by jasl). Their original `SPDX-License-Identifier: Apache-2.0` and
 `Copyright contributors to the vLLM project` headers are retained unchanged.
 
-## Modifications to `kernels/` (ours)
+## Modifications to `kernels/` (mine)
 
 These changes were made by this project to get GLM-5.2's `glm_moe_dsa`
 (DeepSeek-V3.2-style sparse-MLA) attention path running on **NVIDIA GB10 /
@@ -44,7 +44,7 @@ extension does not support.
 
 The following are **original works of this project**, not derived from the
 vendored Apache-2.0 kernels, and are licensed under this repository's Apache-2.0
-LICENSE with our own copyright:
+LICENSE with my own copyright:
 
 - `prune/awq_surgery.py` — the data-free routed-expert prune.
 - `mtp/*` — the separate-draft MTP reconstruction + verification scripts.
