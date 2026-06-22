@@ -21,7 +21,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODES=(192.168.200.12 192.168.200.13 192.168.200.14 192.168.200.15)   # rank 0..3
 SSH_USER="cosmicraisins"
 
-# NFS host that exports the shared weights read-only to all nodes, and the mount.
+# Weight distribution. This reference setup uses NFS (one host exports the weights
+# read-only to all nodes). NFS is NOT required — replace steps 4-5 with whatever
+# gets the weights onto every node (per-node local copies, another shared FS, ...).
 NFS_HOST_RAIL="192.168.200.14"
 WEIGHTS_RO_DIR="/srv/hf/hub"          # exported dir, mounted on every node
 HF_HOME="/srv/hf"                     # HF_HOME on the NFS host
