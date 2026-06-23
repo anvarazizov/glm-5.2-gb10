@@ -25,7 +25,7 @@ the data-free prune.
 | 13 | MTP `k` tuning | swept k=2..6 → **k=3** TG peak on generic corpus (accept saturates ~1.9/step) | me |
 | 14 | Thinking leaked inline; no tool calls | `--reasoning-parser glm45 --tool-call-parser glm47 --enable-auto-tool-choice` | parsers **vLLM/Z.ai**; wiring = me |
 | 15 | 256k vs boot free-mem guard knife-edge | `gmu 0.93` (0.935 trips the guard; 0.93 → 268k-token KV) | me |
-| 16 | Launch silently fell to the Ray path (no triton mounts) | use the **short** recipe name → `launch-raw-entrypoint-nfs.py`; reap orphan workers between launches | me |
+| 16 | Multi-node launch fiddly + harness-coupled (orphan workers, missing triton mounts) | a plain per-node `docker run` (`launch.sh`) using vLLM's native `--nnodes/--node-rank/--master-addr/--master-port`, IB-passthrough + kernel binds baked in; reap with `./launch.sh --stop` | me |
 | 17 | "Is NVFP4 a faster door?" | Probe: `flashinfer_cutlass` FP4 MoE **runs** on sm_121 (where `flashinfer_b12x`/PR#40082 crashes) but gives **no prefill win** — prefill is attention/indexer-bound | b12x/oracle **vLLM**; conclusion = me |
 
 ## On the prune (it is NOT REAP)

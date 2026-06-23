@@ -1,19 +1,18 @@
-# GLM-5.2-AWQ-15pct production serving recipe — 4× GB10 / DGX Spark (sm_121), TP=4.
-# Launched by spark-vllm-docker's run-recipe.sh with the SHORT recipe name (see
-# bootstrap.sh / README). MTP k=3, cudagraph FULL, prefix caching, fp8 KV, 256k ctx.
+# GLM-5.2-AWQ-15pct production serving spec — 4× GB10 / DGX Spark (sm_121), TP=4.
+# MTP k=3, cudagraph FULL, prefix caching, fp8 KV, 256k ctx.
 #
-# EDIT FOR YOUR CLUSTER: `cluster_nodes` and the NCCL_IB_HCA / NCCL_SOCKET_IFNAME /
-# GLOO_SOCKET_IFNAME values below are specific to my RoCE fabric. Set them for yours
-# (HCAs via `ibdev2netdev`, interface names via `ip link`).
+# REFERENCE ONLY. The launcher is ../launch.sh, which inlines this env + command
+# and does a plain per-node `docker run` (no external harness, no shared FS). This
+# file documents the exact flags; if you change one here, change it in launch.sh.
+#
+# EDIT FOR YOUR CLUSTER: the NCCL_IB_HCA / NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME
+# values below are specific to my RoCE fabric. Set them for yours (HCAs via
+# `ibdev2netdev`, interface names via `ip link`).
 recipe_version: "1"
 name: GLM-5.2-AWQ-prod-256k
 description: GLM-5.2-AWQ TP=4 mp, b12x image, MTP k=3, cudagraph FULL, prefix-cache, 256k
-raw_entrypoint: true
-shared_weights_nfs: true
-cluster_nodes: [192.168.200.12, 192.168.200.13, 192.168.200.14, 192.168.200.15]  # EDIT: your rail IPs, rank 0 first
-container: vllm-node-tf5-glm52-b12x:probe   # must match IMAGE_TAG in bootstrap.sh
+container: vllm-node-tf5-glm52-b12x:probe   # must match IMAGE in launch.sh
 model: /cache/huggingface/hub/glm52-awq-15pct
-cluster_only: true
 defaults:
   port: 8210
 env:

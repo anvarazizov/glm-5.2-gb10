@@ -21,12 +21,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODES=(192.168.200.12 192.168.200.13 192.168.200.14 192.168.200.15)   # rank 0..3
 SSH_USER="cosmicraisins"
 
-# Weight distribution. This reference setup uses NFS (one host exports the weights
-# read-only to all nodes). NFS is NOT required — replace steps 4-5 with whatever
-# gets the weights onto every node (per-node local copies, another shared FS, ...).
-NFS_HOST_RAIL="192.168.200.14"
-WEIGHTS_RO_DIR="/srv/hf/hub"          # exported dir, mounted on every node
-HF_HOME="/srv/hf"                     # HF_HOME on the NFS host
+# Weights. WEIGHTS_DIR is the HF_HOME on every node — it must hold `hub/` with the
+# weights and the NCCL lib (see steps 2 and 4). Mounted at /cache/huggingface by
+# launch.sh. This bootstrap fetches the weights to WEIGHTS_DIR on EACH node (no
+# shared FS assumed). If you DO have a shared mount, point WEIGHTS_DIR at it and the
+# per-node fetch in step 4 becomes a no-op after the first node.
+WEIGHTS_DIR="\$HOME/.cache/huggingface"   # per-node; expanded remotely (note the \$)
+HUB="$WEIGHTS_DIR/hub"
 
 # HuggingFace repo IDs. Defaults pull the published weights for this stack; point
 # them at your own repos only if you re-prune / rebuild the draft yourself.
@@ -40,9 +41,9 @@ VLLM_REF="ab666069935c1f23e8ef56038b4659ac9e8f19f8"   # post-0.23.0, GLM5.2 + in
 IMAGE_TAG="vllm-node-tf5-glm52-b12x:probe"      # built/tagged by the harness
 
 NCCL_VERSION="2.30.4"                  # the shm_broadcast-wedge fix; aarch64 wheel exists
-RECIPE="4x-spark-cluster/glm52-awq-15pct-prod"  # SHORT name — see step 6 note
 
 KERNEL_DST="\$HOME/glm-triton"         # per-node mount source for the Triton kernels
+                                       # (must match KERNELS_DIR in launch.sh)
 # ============================================================================
 
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
@@ -83,19 +84,23 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-say "Step 2 — NCCL $NCCL_VERSION (fixes the shm_broadcast warmup wedge)"
-NCCL_DIR="$WEIGHTS_RO_DIR/nccl-$NCCL_VERSION"
-if on "$NFS_HOST_RAIL" "test -f $NCCL_DIR/libnccl.so.2"; then
-  ok "libnccl.so.2 already staged at $NCCL_DIR (NFS)"
-else
-  on "$NFS_HOST_RAIL" "
-    set -e; python3 -m pip download --no-deps -d /tmp/ncclwheel nvidia-nccl-cu13==$NCCL_VERSION
-    mkdir -p $NCCL_DIR
-    cd /tmp/ncclwheel && unzip -o nvidia_nccl_cu13-*manylinux*aarch64.whl -d /tmp/ncclx
-    cp /tmp/ncclx/nvidia/nccl/lib/libnccl.so.2 $NCCL_DIR/
-  " || die "NCCL stage failed (need an aarch64 nvidia-nccl-cu13==$NCCL_VERSION wheel)"
-  ok "libnccl.so.2 staged → recipe LD_PRELOADs it from $NCCL_DIR"
-fi
+say "Step 2 — NCCL $NCCL_VERSION on every node (fixes the shm_broadcast warmup wedge)"
+# launch.sh LD_PRELOADs /cache/huggingface/hub/nccl-$NCCL_VERSION/libnccl.so.2, so the
+# lib must live in HUB on every node. Stage it node-local (no shared FS assumed).
+NCCL_DIR="$HUB/nccl-$NCCL_VERSION"
+for ip in "${NODES[@]}"; do
+  if on "$ip" "test -f $NCCL_DIR/libnccl.so.2"; then
+    ok "$ip  libnccl.so.2 already staged at $NCCL_DIR"
+  else
+    on "$ip" "
+      set -e; python3 -m pip download --no-deps -d /tmp/ncclwheel nvidia-nccl-cu13==$NCCL_VERSION
+      mkdir -p $NCCL_DIR
+      cd /tmp/ncclwheel && unzip -o nvidia_nccl_cu13-*manylinux*aarch64.whl -d /tmp/ncclx
+      cp /tmp/ncclx/nvidia/nccl/lib/libnccl.so.2 $NCCL_DIR/
+    " || die "NCCL stage failed on $ip (need an aarch64 nvidia-nccl-cu13==$NCCL_VERSION wheel)"
+    ok "$ip  libnccl.so.2 staged → launch.sh LD_PRELOADs it from $NCCL_DIR"
+  fi
+done
 
 # ----------------------------------------------------------------------------
 say "Step 3 — deploy the Triton sparse-MLA kernels to every node"
@@ -107,50 +112,47 @@ for ip in "${NODES[@]}"; do
     cat "$f" | on "$ip" "cat > $KERNEL_DST/$(basename "$f")"
   done
   n=$(on "$ip" "ls $KERNEL_DST/*.py | wc -l")
-  ok "$ip  $n kernel files in $KERNEL_DST  (recipe ro-mounts them over $MLA/)"
+  ok "$ip  $n kernel files in $KERNEL_DST  (launch.sh ro-mounts them over $MLA/)"
 done
 
 # ----------------------------------------------------------------------------
-say "Step 4 — fetch weights to the NFS host ($PRUNED_REPO)"
+say "Step 4 — fetch weights into HUB on every node ($PRUNED_REPO)"
+# No shared FS: each node gets its own copy under HUB. If WEIGHTS_DIR is a shared
+# mount instead, this downloads once and the other nodes see it already present.
 case "$PRUNED_REPO" in *"<your-hf-username>"*)
   cat <<EOF
    ! PRUNED_REPO is still a placeholder.
      Either (a) set PRUNED_REPO to your uploaded 15%-prune, or
-            (b) re-create it: hf download $BASE_AWQ_REPO to the NFS host, then
-                python3 $HERE/prune/awq_surgery.py build <src> $WEIGHTS_RO_DIR/glm52-awq-15pct 0.15
+            (b) re-create it: hf download $BASE_AWQ_REPO, then
+                python3 $HERE/prune/awq_surgery.py build <src> $HUB/glm52-awq-15pct 0.15
      and likewise build the MTP draft from mtp/ (see mtp/README or the retrospective).
 EOF
   die "set PRUNED_REPO / MTP_DRAFT_REPO, or re-prune locally, then re-run from step 4" ;;
 esac
-on "$NFS_HOST_RAIL" "
-  set -e; export HF_HOME=$HF_HOME HF_HUB_DISABLE_XET=0
-  hf download $PRUNED_REPO  --local-dir $WEIGHTS_RO_DIR/glm52-awq-15pct
-  hf download $MTP_DRAFT_REPO --local-dir $WEIGHTS_RO_DIR/glm52-mtp-int4-aligned
-" || die "weight download failed (check HF auth + disk on $NFS_HOST_RAIL)"
-ok "weights present under $WEIGHTS_RO_DIR"
-
-# ----------------------------------------------------------------------------
-say "Step 5 — mount NFS weights read-only on every node"
 for ip in "${NODES[@]}"; do
-  on "$ip" "mountpoint -q $HF_HOME || sudo mount -t nfs -o ro,vers=3 $NFS_HOST_RAIL:$HF_HOME $HF_HOME" \
-    && ok "$ip  $HF_HOME mounted" || die "NFS mount failed on $ip (gn100 nodes may need an interactive sudo)"
+  if on "$ip" "test -d $HUB/glm52-awq-15pct && test -d $HUB/glm52-mtp-int4-aligned"; then
+    ok "$ip  weights already present under $HUB"
+  else
+    on "$ip" "
+      set -e; export HF_HUB_DISABLE_XET=0
+      hf download $PRUNED_REPO  --local-dir $HUB/glm52-awq-15pct
+      hf download $MTP_DRAFT_REPO --local-dir $HUB/glm52-mtp-int4-aligned
+    " || die "weight download failed on $ip (check HF auth + disk)"
+    ok "$ip  weights present under $HUB"
+  fi
 done
 
 # ----------------------------------------------------------------------------
-say "Step 6 — launch the serving recipe"
-# IMPORTANT: pass the SHORT recipe name (no 'recipes/' prefix, no '.yaml'), or
-# run-recipe.sh silently falls through to the Ray path WITHOUT the triton mounts.
-cp "$HERE/recipes/glm52-awq-15pct-prod.yaml" \
-   "$SPARK_VLLM_DOCKER/recipes/4x-spark-cluster/glm52-awq-15pct-prod.yaml"
-( cd "$SPARK_VLLM_DOCKER" && WEIGHTS_RO_DIR=$WEIGHTS_RO_DIR ./run-recipe.sh "$RECIPE" ) \
-  || die "launch dispatch failed"
+say "Step 5 — launch (plain per-node docker run; no shared FS, no external harness)"
+# launch.sh reads its own CONFIG block — make sure NODES / IMAGE / WEIGHTS_DIR /
+# KERNELS_DIR there match this file. Preview the exact commands with --dry-run.
+( cd "$HERE" && ./launch.sh ) || die "launch failed (try: ./launch.sh --dry-run)"
 
-say "Step 7 — wait for readiness (~12 min load + ~10 min cudagraph warmup)"
+say "Step 6 — wait for readiness (~12 min load + ~10 min cudagraph warmup)"
 echo "   poll:  curl -s http://localhost:8210/v1/models"
 echo "   logs:  docker logs -f vllm_slot   (on the head node)"
 echo
 echo "   If warmup wedges (NCCL/Gloo), reap all nodes and relaunch:"
-echo "     for ip in ${NODES[*]}; do ssh ${SSH_USER}@\$ip 'docker rm -f vllm_slot'; done"
-echo "     then re-run step 6."
+echo "     ./launch.sh --stop && ./launch.sh"
 echo
 ok "GLM-5.2 will serve an OpenAI-compatible API on :8210 as 'glm-5.2-15pct'"

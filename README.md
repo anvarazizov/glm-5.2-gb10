@@ -18,14 +18,26 @@ Blackwell (sm_100).
 
 Edit the CONFIG block in `bootstrap.sh` (node IPs, weights location, HF repo ids),
 then run it from the head node. It verifies the cluster, builds the pinned vLLM
-image, mounts the Triton kernels, installs NCCL 2.30.4, fetches the weights, and
-launches. Serves an OpenAI-compatible API on `:8210` as `glm-5.2-15pct`.
+image, deploys the Triton kernels, installs NCCL 2.30.4, fetches the weights to
+every node, and launches via `launch.sh`. Serves an OpenAI-compatible API on
+`:8210` as `glm-5.2-15pct`.
+
+**Launch is a plain `docker run`.** `launch.sh` starts the container on each node
+directly — no Ray, no shared filesystem, no external harness. Multi-node is vLLM's
+own mechanism (`--nnodes/--node-rank/--master-addr/--master-port`): workers come up
+headless, then the head serves the API. You can run it on its own once the image,
+kernels, and weights are in place; edit its CONFIG block (it mirrors `bootstrap.sh`)
+and preview the exact commands with `./launch.sh --dry-run`. Stop with `./launch.sh --stop`.
+
+Weights just need to be present on each node under the configured directory
+(`$WEIGHTS_DIR/hub/...`). `bootstrap.sh` fetches a per-node copy; if you have a
+shared mount, point `WEIGHTS_DIR` at it instead. Nothing requires NFS.
 
 The image build is not self-contained — it requires two `spark-vllm-docker` mods
 that are not vendored here. See **Image build** below before running `bootstrap.sh`.
 
-The serving recipe (`recipes/glm52-awq-15pct-prod.yaml`) also carries RoCE fabric
-values (HCA + interface names, node IPs) hardcoded to my cluster — set those for
+`launch.sh` (and the reference `recipes/glm52-awq-15pct-prod.yaml`) carry RoCE
+fabric values (HCA + interface names) hardcoded to my cluster — set those for
 yours. The lines are marked `EDIT`.
 
 ## Image build — required vLLM mods (not vendored)
@@ -72,10 +84,12 @@ silently.)
 
 ## Contents
 
+- `bootstrap.sh` — end-to-end bring-up (build → kernels → NCCL → weights → launch)
+- `launch.sh` — self-contained per-node `docker run` launcher (no Ray, no shared FS)
 - `kernels/` — portable Triton sparse-MLA (vLLM/jasl, Apache-2.0, modified — `CHANGES.md`)
 - `prune/awq_surgery.py` — the data-free 15% expert prune
 - `mtp/` — separate-draft MTP reconstruction
-- `recipes/` — the serving recipe
+- `recipes/` — the serving spec (flags + env; mirrored by `launch.sh`)
 - `model-card/` — HuggingFace card for the pruned weights
 - `docs/retrospective.md` — every fix, with attribution
 
