@@ -63,6 +63,15 @@ done
 
 # ----------------------------------------------------------------------------
 say "Step 1 — build the vLLM image (eugr/spark-vllm-docker, pinned ref)"
+# REQUIRED MODS (not vendored here — see README "Image build"):
+#   * mods/glm52-sm12x-sparse  — installs kernels/ into the vLLM tree + patches
+#       vllm/utils/deep_gemm.py and sparse_attn_indexer.py (the sm_121 DeepGEMM
+#       bypass). Baked by Dockerfile.glm52-consolidated.
+#   * mods/glm52-b12x-sparse   — pip install --no-deps b12x==0.23.0 + fused_indexer
+#       patch. The decode path calls b12x first; WITHOUT it, cudagraph FULL crashes
+#       (torch.full under capture) — use cudagraph_mode PIECEWISE instead.
+# build-and-copy.sh below builds only the BASE image; apply both mods on top
+# (RUN bash mods/<name>/run.sh, or launch-cluster.sh --apply-mod) before launch.
 [ -d "$SPARK_VLLM_DOCKER" ] || die "clone eugr/spark-vllm-docker to $SPARK_VLLM_DOCKER first (NOT vendored here)"
 if on "${NODES[0]}" "docker image inspect $IMAGE_TAG >/dev/null 2>&1"; then
   ok "image $IMAGE_TAG already present on head"
