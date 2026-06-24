@@ -116,3 +116,40 @@ recipe ships k=3 — treat it as a starting point, not a settled answer.
 
 Apache-2.0 (this repo). Serves MIT weights: GLM-5.2 (Z.ai) → AWQ (cyankiwi) →
 pruned here. See `NOTICE` and `ATTRIBUTION.md`.
+
+---
+
+## Reproducing on another 4× GB10 cluster (community notes)
+
+This fork adds notes + scripts for getting this stack running on a **different** 4-node
+GB10 / DGX Spark cluster than the author's. See [`community/`](community/) for the full
+write-up; the two things that blocked us and how we fixed them:
+
+1. **The image isn't buildable from public sources as-is.** The two required vLLM mods
+   (`glm52-sm12x-sparse`, `glm52-b12x-sparse`) referenced in the README aren't in the public
+   `eugr/spark-vllm-docker` (checked `main` + `develop`), and `Dockerfile.glm52-consolidated` /
+   `build-glm52-awq.sh` aren't published. Only the **kernels** are public. →
+   [`community/build-recon-image.sh`](community/build-recon-image.sh) **reconstructs the mods from
+   the public kernels**: bakes them in + creates `deepseek_v4_ops/`, patches `deep_gemm.py`
+   (route the 3 DSA fns to the `sm12x_*` fallbacks before the `_missing()` gate) and
+   `sparse_attn_indexer.py` (drop the `has_deep_gemm` gate on sm12x), auto-applies the
+   flashmla→Triton monkeypatch, and `pip install b12x==0.23.0`.
+
+2. **Pin the vLLM ref.** Building on a *newer* vLLM than the author's
+   `ab666069935c1f23e8ef56038b4659ac9e8f19f8` makes the real AWQ weights crash at
+   `process_weights_after_loading` (`_k_scale.fill_` → async `CUDA error: invalid argument`).
+   Dummy weights load fine, so it's specific to real-weight processing on the wrong ref.
+   **Build vLLM at exactly that commit** (`--tf5`).
+
+Other port notes (full detail in [`community/README.md`](community/README.md)): the 15% prune is
+deterministically reproducible from `cyankiwi/GLM-5.2-AWQ-INT4` via `prune/awq_surgery.py` (skip the
+378 GB download); on memory-tight nodes drop `gpu-memory-utilization` to `0.90` + a lower
+`max-model-len` (0.93/256k trips the boot guard); with no shared FS, NFS-export the weights from the
+head; and set `NCCL_IB_HCA` / `NCCL_IB_GID_INDEX` for *your* RoCE fabric.
+
+Result on our cluster: serves `glm-5.2-15pct`, coherent output, **~9.4 tok/s** decode on a single
+RoCE rail (MTP acceptance ~2.8/4). Dual-rail (the author's ~20 tok/s) is the open lever — the
+inter-node allreduce bandwidth is the decode bottleneck on these boxes.
+
+Huge credit to **CosmicRaisins** for the kernel port, the MTP reconstruction, and the data-free
+prune — the above is just integration glue to make it portable.
